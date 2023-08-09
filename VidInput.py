@@ -12,8 +12,8 @@ import tensorflow_hub as hub
 import sys
 import warnings
 import time
-
-
+import ffmpeg
+import glob
 
 
 #/home/orin_nx/Desktop/LTV/HighZoom1.ts
@@ -28,38 +28,41 @@ def streamRead():
     cap = cv2.VideoCapture('udp://' + ipadd + ':' + portnum)
 
     if not cap.isOpened():
-        print('No stream detected. Program exit')
+        print("Cannot display video")
         exit(-1)
-    
-    print('Stream found')
-
-    i=0
-
-    #Creates folder for frames to be stored in 
+    print('Video found')
     frames = 0
-    '''
+    
     shutil.rmtree("/home/orin_nx/Desktop/Frames")
     os.mkdir("/home/orin_nx/Desktop/Frames")
-    '''
+    time1 = time.perf_counter()
+    i=0
+    print("Processing video...")
     while True:
         ret, frame = cap.read()
-        #cv2.imshow('image', frame)
-        
         if not ret:
             print('frame empty')
             break
-
-        cv2.imshow('image', frame)
+        resized_frame = resizeSquare(frame, 1280, 1280)
+        #modelDet(resized_frame)
+        #cv2.imshow('image', resized_frame)
+        odimg = modelDet(resized_frame)
+        print(resized_frame.shape)
         i+=1
-        #cv2.waitKey(0) 
         if cv2.waitKey(34)&0XFF == ord('q'):
+            #print(processTimeList)
             break
-        if frames >= 900:
-            continue
+        
+        #if frames >=900:
+            #continue
         out_path = "/home/orin_nx/Desktop/Frames"
         frame_name = 'Frame' + str(i) + '.jpg'
-        cv2.imwrite(os.path.join(out_path, frame_name), frame)
+        cv2.imwrite(os.path.join(out_path, frame_name), odimg)
         frames+=1
+    time2 = time.perf_counter()
+    processTime = time2 - time1
+    print(processTime)
+    vidPlay()
 
     #destroy window
     cap.release()
@@ -67,7 +70,6 @@ def streamRead():
 
 def fileRead():
     global processTimeList
-    processTimeList = []
     pathtovid = input("Paste the path to the video you would like displayed: ")
     pathtovid = pathtovid.strip('"')
     print(pathtovid)
@@ -80,45 +82,57 @@ def fileRead():
         exit(-1)
     print('Video found')
     frames = 0
-    '''
+    
     shutil.rmtree("/home/orin_nx/Desktop/Frames")
     os.mkdir("/home/orin_nx/Desktop/Frames")
-    '''
+    time1 = time.perf_counter()
     i=0
+    print("Processing video...")
     while True:
         ret, frame = fileCap.read()
         if not ret:
             print('frame empty')
             break
-        resized_frame = resizeSquare(frame, 800, 1333)
+        resized_frame = resizeSquare(frame, 1280, 1280)
         #modelDet(resized_frame)
         #cv2.imshow('image', resized_frame)
-        modelDet(resized_frame)
-        print(resized_frame.shape)
+        odimg = modelDet(resized_frame)
+        print(resized_frame.shape, frames)
         i+=1
         if cv2.waitKey(34)&0XFF == ord('q'):
-            print(processTimeList)
+            #print(processTimeList)
             break
-        '''
+        
         #if frames >=900:
             #continue
         out_path = "/home/orin_nx/Desktop/Frames"
         frame_name = 'Frame' + str(i) + '.jpg'
-        #cv2.imwrite(os.path.join(out_path, frame_name), resized_frame)
+        cv2.imwrite(os.path.join(out_path, frame_name), odimg)
         frames+=1
-        '''
-    fileCap.release()
+    time2 = time.perf_counter()
+    processTime = time2 - time1
+    print(processTime)
+    vidPlay()
+    #fileCap.release()
+    #cv2.destroyAllWindows()
+
+
+def vidPlay():
+    #(ffmpeg.input('/home/orin_nx/Desktop/Frames/*.jpg', pattern_type='glob', framerate=25).output('movie.mp4').run())
+    image_folder = "/home/orin_nx/Desktop/Frames/"
+    images = [img for img in os.listdir(image_folder) if img.endswith(".jpg")]
+    images.sort(key=lambda x: int(x.replace("Frame", "").replace(".jpg", "")))
+    frame = cv2.imread(os.path.join(image_folder, images[0]))
+    height, width, layers = frame.shape
+
+    video = cv2.VideoWriter('video.avi', 0, 17, (width,height))
+
+    for image in images:
+        video.write(cv2.imread(os.path.join(image_folder, image)))
+
     cv2.destroyAllWindows()
-'''
-def resizeSquare(im):
-  s = max(im.shape[0:2])
-  f = np.zeros((s, s, 3), np.uint8)
-  ax, ay = (s - im.shape[1])//2, (s - im.shape[0])//2
-  f[ay:im.shape[0]+ay, ax:ax+im.shape[1]] = im
-  #f = cv2.cvtColor(f, cv2.COLOR_BGR2RGB)
-  #rgb_tensor = tf.convert_to_tensor(f, dtype = tf.uint8)
-  return f
-'''
+    video.release()
+
 
 def resizeSquare(im, target_width, target_height):
     # Calculate the scaling factor based on the target dimensions and the larger dimension of the original image
@@ -143,8 +157,6 @@ def resizeSquare(im, target_width, target_height):
     canvas[ay:ay + new_height, ax:ax + new_width] = resized_im
 
     return canvas
-
-
 
 
 def read_label_map(label_map_path):
@@ -173,7 +185,6 @@ def read_label_map(label_map_path):
   return items
 
 
-
 def modelDet(img):
     global processTimeList
     
@@ -186,10 +197,10 @@ def modelDet(img):
     h, w, _ = img.shape
 
     input_tensor = np.expand_dims(img, 0)
-    time1=time.perf_counter()
+    #time1=time.perf_counter()
     # predict from model
     resp = model(input_tensor)
-    time2 = time.perf_counter()
+    #time2 = time.perf_counter()
     # iterate over boxes, class_index and score list
     for boxes, classes, scores in zip(resp['detection_boxes'].numpy(), resp['detection_classes'], resp['detection_scores'].numpy()):
         classes = np.vectorize(convert_to_string)(classes)
@@ -201,13 +212,6 @@ def modelDet(img):
                 xmax = int(box[3] * w)
                 # write classname for bounding box
                 #cls = tf.cast(cls, tf.int32)
-                '''
-                classes[cls] = tf.cast(classes[cls], tf.int32)
-                ymin = tf.cast(ymin, tf.int32)
-                ymax = tf.cast(ymax, tf.int32)
-                xmin = tf.cast(xmin, tf.int32)
-                xmax = tf.cast(xmax, tf.int32)
-                '''
 
                 cls = cls.astype(float)
                 cls = cls.astype(int)
@@ -218,10 +222,10 @@ def modelDet(img):
                 cv2.rectangle(img, (xmin, ymin), (xmax, ymax), (128, 0, 128), 4)
     # convert back to bgr and save image
     img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
-    cv2.imshow("image", img)
-    
-    processTime = time2 - time1
-    processTimeList.append(processTime)
+    #cv2.imshow("image", img)
+    return img
+    #processTime = time2 - time1
+    #processTimeList.append(processTime)
 
 def convert_to_string(x):
     return str(x)
@@ -230,7 +234,8 @@ def main():
     global model
     #model = hub.load("https://tfhub.dev/google/openimages_v4/ssd/mobilenet_v2/1")
     #model = hub.load("https://tfhub.dev/tensorflow/faster_rcnn/resnet152_v1_800x1333/1")
-    model = tf.saved_model.load("/home/orin_nx/Downloads/efficientdet_d1_coco17_tpu-32/saved_model")
+    model = hub.load("https://tfhub.dev/tensorflow/efficientdet/d0/1")
+    #model = tf.saved_model.load("/home/orin_nx/Downloads/efficientdet_d1_coco17_tpu-32/saved_model")
     print("MODEL LOAD")
     read_label_map("/home/orin_nx/Desktop/mscoco_label_map.pbtxt")
     while True: 
