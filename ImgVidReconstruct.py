@@ -4,7 +4,7 @@ import shutil
 import numpy
 import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
+#import matplotlib.pyplot as plt
 import os
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3' # or any {'0', '1', '2'}
 import tensorflow as tf
@@ -14,11 +14,15 @@ import warnings
 import time
 import ffmpeg
 import glob
-
+import threading
+import psutil
+import subprocess
+import tkinter as tk
 
 #/home/orin_nx/Desktop/LTV/HighZoom1.ts
 #global ProcessTimeList
 #/home/orin_nx/Desktop/LTV/People.mp4
+
 def streamRead():
 
     #Reads user input for IP connection and captures video from it
@@ -73,7 +77,7 @@ def fileRead():
     pathtovid = pathtovid.strip('"')
     print(pathtovid)
     fileCap = cv2.VideoCapture(pathtovid)
-
+    frameSkip = 0
     #fileCap = cv2.VideoCapture(r"C:\Users\Addic\Projh\Test Videos\HighZoom.ts")
     #fileCap = cv2.VideoCapture(0)
     if not fileCap.isOpened():
@@ -124,11 +128,12 @@ def vidPlay():
     frame = cv2.imread(os.path.join(image_folder, images[0]))
     height, width, layers = frame.shape
 
-    video = cv2.VideoWriter('videoV.avi', 0, 30, (width,height))
+    nameChoice = input("Enter the name you would like the video to be saved as: ")
+    video = cv2.VideoWriter(nameChoice + '.avi', 0, 30, (width,height))
 
     for image in images:
         video.write(cv2.imread(os.path.join(image_folder, image)))
-
+    print("Video now available on local files.")
     cv2.destroyAllWindows()
     video.release()
 
@@ -186,7 +191,7 @@ def read_label_map(label_map_path):
 
 def modelDet(img):
     global processTimeList
-    
+    global global_boxes, global_classes, global_scores
     # read image and preprocess
     
     img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
@@ -199,6 +204,11 @@ def modelDet(img):
     #time1=time.perf_counter()
     # predict from model
     resp = model(input_tensor)
+    
+    #save current boxes for static box
+    global_boxes = resp['detection_boxes'].numpy()
+    global_classes = resp['detection_classes']
+    global_scores = resp['detection_scores'].numpy()
     #time2 = time.perf_counter()
     # iterate over boxes, class_index and score list
     for boxes, classes, scores in zip(resp['detection_boxes'].numpy(), resp['detection_classes'], resp['detection_scores'].numpy()):
@@ -216,9 +226,10 @@ def modelDet(img):
                 cls = cls.astype(int)
                 #print(type(cls))
                 #print(classes)
-                cv2.putText(img, classes[cls], (xmin, ymin-10), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 0, 0), 1)
+                if classes[cls]=="1.0":
+                    cv2.putText(img, classes[cls], (xmin, ymin-10), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 0, 0), 1)
                 # draw on image
-                cv2.rectangle(img, (xmin, ymin), (xmax, ymax), (128, 0, 128), 4)
+                    cv2.rectangle(img, (xmin, ymin), (xmax, ymax), (128, 0, 128), 4)
     # convert back to bgr and save image
     img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
     #cv2.imshow("image", img)
@@ -230,22 +241,52 @@ def convert_to_string(x):
     return str(x)
 
 def main():
-    global model
+    global model, label, window
+    print("Main Loop Begin")
     #model = hub.load("https://tfhub.dev/google/openimages_v4/ssd/mobilenet_v2/1")
     #model = hub.load("https://tfhub.dev/tensorflow/faster_rcnn/resnet152_v1_800x1333/1")
-    model = hub.load("https://tfhub.dev/tensorflow/efficientdet/d0/1")
+    #model = hub.load("https://tfhub.dev/tensorflow/retinanet/resnet101_v1_fpn_640x640/1")
+    #model = hub.load("https://tfhub.dev/tensorflow/centernet/resnet50v1_fpn_512x512/1")
+    model = hub.load("https://tfhub.dev/tensorflow/mask_rcnn/inception_resnet_v2_1024x1024/1")
+    #model = hub.load("https://tfhub.dev/tensorflow/efficientdet/d0/1")
+    #model = hub.load("/home/orin_nx/Desktop/")
+    #model = hub.load("https://tfhub.dev/tensorflow/efficientdet/d7/1")
     #model = tf.saved_model.load("/home/orin_nx/Downloads/efficientdet_d1_coco17_tpu-32/saved_model")
     print("MODEL LOAD")
     read_label_map("/home/orin_nx/Desktop/mscoco_label_map.pbtxt")
+    window = tk.Tk()
+    label=tk.Label(text="Initializaing")
+    stat_thread = threading.Thread(target=stat_cpu)
+    print("THREAD INIT")
+    stat_thread.start()
+    print("THREAD START")
+
+    hawk_thread = threading.Thread(target=hawkeye)
+    hawk_thread.start()
+
+    window.mainloop()
+
+def stat_cpu():
+    global label, window
+    while True:
+        cpu_usage = psutil.cpu_percent(interval=1)
+        ram_usage = psutil.virtual_memory().percent
+        label.destroy()
+        label = tk.Label(text=f"CPU USAGE: {cpu_usage}% \nRAM Usage: {ram_usage}%")
+        label.pack()  
+        time.sleep(1)
+
+def hawkeye():
     while True: 
-        userchoice = input("Type stream to read from stream. Type local to read from local files: ")
-        userchoice = userchoice.upper()
-        if userchoice == 'STREAM':
-            streamRead()
-        if userchoice == 'LOCAL':
-            fileRead()
-        else:
-            print('Input not understood. Try again.')
+            userchoice = input("Type stream to read from stream. Type local to read from local files: ")
+            userchoice = userchoice.upper()
+            if userchoice == 'STREAM':
+                streamRead()
+            if userchoice == 'LOCAL':
+                fileRead()
+            else:
+                print('Input not understood. Try again.')
+
 
 if __name__ == "__main__":
     main()
