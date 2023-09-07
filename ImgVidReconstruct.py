@@ -20,6 +20,8 @@ import subprocess
 import tkinter as tk
 from jtop import jtop
 from tqdm import tqdm
+from tensorflow.python.ops.numpy_ops import np_config 
+np_config.enable_numpy_behavior()
 #/home/orin_nx/Desktop/LTV/HighZoom1.ts
 #global ProcessTimeList
 #/home/orin_nx/Desktop/LTV/People.mp4
@@ -95,7 +97,9 @@ def fileRead():
 
     
     global processTimeList
-
+    global accumulated_scores, classCount
+    accumulated_scores = []
+    classCount = {}
     #User inputs path to local file to be analyzed, then take video from that file
 
     pathtovid = input("Paste the path to the video you would like displayed: ")
@@ -108,7 +112,7 @@ def fileRead():
     #totFrames=int(fileCap.get(cv2.CAP_PROP_TOTAL_TIME))
     #totFrames = totFrames / 30
     totFrames = 1
-    frameSkip = 0
+
     
     #If file cannot be found, exit the program. If found, send a notification
 
@@ -173,7 +177,6 @@ def fileRead():
         #call vidPlay function to stitch together frames in the folder into final output video
 
         vidPlay()
-        textFiles()
 
     
 
@@ -181,6 +184,8 @@ def fileRead():
 #Stitches frames in folder together to create output .avi video
 
 def vidPlay():
+    global boxes, classes, scores
+    global accumulated_scores, classCount
     #Finds all jpg frames in folder and sorts them, then reads them into frame
 
     image_folder = "/home/orin_nx/Desktop/Frames/"
@@ -189,7 +194,7 @@ def vidPlay():
     frame = cv2.imread(os.path.join(image_folder, images[0]))
     height, width, layers = frame.shape
 
-    #Calls for user input for what to save the video as, then calls VideoWriter function to save it
+    #Calls for user input for what to save folder name as, then save output video under that name in folder as well as text files with tensors in them
 
     nameChoice = input("Enter the name of the folder you would like the output files to be saved as: ")
     os.mkdir('./' + nameChoice)
@@ -198,20 +203,24 @@ def vidPlay():
         video.write(cv2.imread(os.path.join(image_folder, image)))
     print("Video now available on local files.")
 
+    #flattened_scores = [score for sublist in accumulated_scores for score in sublist]
+    #scoreMean = sum(flattened_scores) / len(flattened_scores)
+    with open('./' + nameChoice + '/' + 'Classifications', 'w') as file:
+        file.write(' '.join(map(str, classes)))
+        #file.write(' '.join(map(lambda x: x + ',', classes)))
+    with open('./' + nameChoice + '/' + 'Scores', 'w') as file:
+        file.write(' '.join(map(str, accumulated_scores)))
+        #file.write('MEAN CONFIDENCE SCORE: '.join(map(str, scoreMean)))
+        #file.write(' '.join(map(lambda x: x + ',', scores)))
+    with open('./' + nameChoice + '/' + 'ClassificationMap', 'w') as file:
+        # Iterate through the items in the classCount dictionary
+        for key, value in classCount.items():
+            # Convert the key and value to strings and write to the file
+            file.write(f"{str(key)}: {str(value)}\n")
     #Destroy OpenCV Windows
 
     cv2.destroyAllWindows()
     video.release()
-    
-
-def textFiles():
-    global boxes, classes, scores
-
-    with open('Classifications', 'w') as file:
-        file.write(' '.join(map(str, classes + ',')))
-    with open('Scores', 'w') as file:
-        file.write(' '.join(map(str, scores + ',')))
-    
 
 
 def resizeSquare(im, target_width, target_height):
@@ -273,6 +282,7 @@ def modelDet(img):
     global global_boxes, global_classes, global_scores
     global classificationSet, scoreSet
     global boxes, classes, scores
+    global accumulated_scores, classCount
     # read image and preprocess
     
     img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
@@ -286,7 +296,7 @@ def modelDet(img):
     #Run frame through pretrained model
 
     resp = model(input_tensor)
-    
+    accumulated_scores.append(resp['detection_scores'])
     #save current boxes for static box (part of attempted implementation for real-time where only one frame every second was actually processed
     #and bounding box coordinates were saved to be drawn on the following frames after the first during the one-second time interval)
 
@@ -302,10 +312,12 @@ def modelDet(img):
     # iterate over boxes, class_index and score list
 
     for boxes, classes, scores in zip(resp['detection_boxes'].numpy(), resp['detection_classes'], resp['detection_scores'].numpy()):
-        print(type(resp['detection_boxes']))
-        print(type(resp['detection_classes']))
-        print(type(resp['detection_scores']))
+        # print(type(resp['detection_boxes']))
+        # print(type(resp['detection_classes']))
+        # print(type(resp['detection_scores']))
         classes = np.vectorize(convert_to_string)(classes)
+        #key = (tuple(classes),)
+        
         for box, cls, score in zip(boxes, classes, scores): # iterate over sub values in list
             if score > 0.6: 
                 ymin = int(box[0] * h)
@@ -317,29 +329,37 @@ def modelDet(img):
 
                 cls = cls.astype(float)
                 cls = cls.astype(int)
+
                 #print(type(cls))
                 #print(classes)
 
                 #Uncomment following block of code and comment out next block to draw bounding box around anything detected above set confidence level:
 
-                # cv2.putText(img, classes[cls], (xmin, ymin-10), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 0, 0), 1)
-                # cv2.rectangle(img, (xmin, ymin), (xmax, ymax), (128, 0, 128), 4)
+                cv2.putText(img, classes[cls], (xmin, ymin-10), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 0, 0), 1)
+                cv2.rectangle(img, (xmin, ymin), (xmax, ymax), (128, 0, 128), 4)
 
                 #Uncomment following block of code and comment out previous block to restrict detection to people/cars/trucks:
-
-                if classes[cls]=="1.0":
-                    cv2.putText(img, classes[cls], (xmin, ymin-10), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 0, 0), 1)
-                # draw on image
-                    cv2.rectangle(img, (xmin, ymin), (xmax, ymax), (128, 0, 128), 4)
-                if classes[cls]=="8.0":
-                    cv2.putText(img, classes[cls], (xmin, ymin-10), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 0, 0), 1)
-                # draw on image
-                    cv2.rectangle(img, (xmin, ymin), (xmax, ymax), (128, 0, 128), 4)
-                if classes[cls]=="3.0":
-                    cv2.putText(img, classes[cls], (xmin, ymin-10), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 0, 0), 1)
-                # draw on image
-                    cv2.rectangle(img, (xmin, ymin), (xmax, ymax), (128, 0, 128), 4)
-
+                # print(classes[cls])
+                # if classes[cls]=="1.0":
+                #     cv2.putText(img, classes[cls], (xmin, ymin-10), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 0, 0), 1)
+                # # draw on image
+                #     cv2.rectangle(img, (xmin, ymin), (xmax, ymax), (128, 0, 128), 4)
+                # if classes[cls]=="8.0":
+                #     cv2.putText(img, classes[cls], (xmin, ymin-10), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 0, 0), 1)
+                # # draw on image
+                #     cv2.rectangle(img, (xmin, ymin), (xmax, ymax), (128, 0, 128), 4)
+                # if classes[cls]=="3.0":
+                #     cv2.putText(img, classes[cls], (xmin, ymin-10), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 0, 0), 1)
+                # # draw on image
+                #     cv2.rectangle(img, (xmin, ymin), (xmax, ymax), (128, 0, 128), 4)
+                 
+                #Update hashmap for classification object count
+                key=cls
+                if key in classCount:
+                    classCount[key]+=1
+                else:
+                    classCount[key]=1
+    
     # convert back to bgr and save image
 
     img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
